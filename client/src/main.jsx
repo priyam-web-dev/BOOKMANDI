@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, useLocation, useNavigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  useLocation,
+  useNavigate
+} from "react-router-dom";
 import { supabase } from "./lib/supabase";
 import "./styles.css";
 
@@ -14,32 +18,48 @@ const CATS = [
   "Romance",
   "Students",
   "Hindi",
-  "Kids"
+  "Kids",
+  "Other"
 ];
 
 const money = (n) =>
   "₹" + Number(n || 0).toLocaleString("en-IN");
 
-async function getProducts() {
-  const { data, error } = await supabase
+function mapProduct(p) {
+  return {
+    ...p,
+    price: Number(p.price || 0),
+    codPrice: Number(p.cod_price || 0),
+    mrp: Number(p.mrp || 0),
+    stock: Number(p.stock || 0),
+    image: p.image_url || "",
+    gallery: Array.isArray(p.gallery_urls)
+      ? p.gallery_urls
+      : []
+  };
+}
+
+/* =========================================================
+   SUPABASE PRODUCTS
+========================================================= */
+
+async function getProducts(includeInactive = false) {
+  let query = supabase
     .from("products")
     .select("*")
-    .eq("active", true)
-    .order("created_at", { ascending: false });
+    .order("created_at", {
+      ascending: false
+    });
 
-  if (error) {
-    console.error("Supabase products error:", error);
-    throw error;
+  if (!includeInactive) {
+    query = query.eq("active", true);
   }
 
-  return (data || []).map((p) => ({
-    ...p,
-    codPrice: Number(p.cod_price),
-    price: Number(p.price),
-    mrp: Number(p.mrp),
-    stock: Number(p.stock),
-    image: p.image_url
-  }));
+  const { data, error } = await query;
+
+  if (error) throw error;
+
+  return (data || []).map(mapProduct);
 }
 
 async function getProduct(id) {
@@ -50,38 +70,109 @@ async function getProduct(id) {
     .eq("active", true)
     .single();
 
-  if (error) {
-    console.error("Supabase product error:", error);
-    throw error;
-  }
+  if (error) throw error;
 
-  return {
-    ...data,
-    codPrice: Number(data.cod_price),
-    price: Number(data.price),
-    mrp: Number(data.mrp),
-    stock: Number(data.stock),
-    image: data.image_url
-  };
+  return mapProduct(data);
 }
 
+/* =========================================================
+   IMAGE UPLOAD
+========================================================= */
+
+async function uploadImage(file) {
+  if (!file) return null;
+
+  const extension =
+    file.name.split(".").pop()?.toLowerCase() || "jpg";
+
+  const safeName =
+    file.name
+      .replace(/\.[^/.]+$/, "")
+      .replace(/[^a-zA-Z0-9-_]/g, "-")
+      .slice(0, 50);
+
+  const filePath =
+    `books/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 9)}-${safeName}.${extension}`;
+
+  const { error } = await supabase.storage
+    .from("book-covers")
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false
+    });
+
+  if (error) throw error;
+
+  const {
+    data: { publicUrl }
+  } = supabase.storage
+    .from("book-covers")
+    .getPublicUrl(filePath);
+
+  return publicUrl;
+}
+
+/* =========================================================
+   COVER
+========================================================= */
+
 function Cover({ p, large = false }) {
+  const image =
+    p?.image ||
+    p?.image_url ||
+    "";
+
+  if (image) {
+    return (
+      <div
+        className={
+          "cover imageCover " +
+          (large ? "large" : "")
+        }
+      >
+        <img
+          src={image}
+          alt={p?.title || "Book cover"}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className={"cover " + (large ? "large" : "")}>
+    <div
+      className={
+        "cover " +
+        (large ? "large" : "")
+      }
+    >
       <small>BOOKMANDI</small>
 
       <div className="coverEmoji">
-        {p?.image || "📚"}
+        📚
       </div>
 
-      <strong>{p?.title || "Book"}</strong>
+      <strong>
+        {p?.title || "Book"}
+      </strong>
 
-      <i>{p?.author || ""}</i>
+      <i>
+        {p?.author || ""}
+      </i>
     </div>
   );
 }
 
-function Header({ count, q, setQ }) {
+/* =========================================================
+   HEADER
+========================================================= */
+
+function Header({
+  count,
+  q,
+  setQ
+}) {
   const nav = useNavigate();
 
   return (
@@ -97,9 +188,12 @@ function Header({ count, q, setQ }) {
 
         <div className="search">
           ⌕
+
           <input
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) =>
+              setQ(e.target.value)
+            }
             placeholder="Search books, authors..."
           />
         </div>
@@ -116,39 +210,56 @@ function Header({ count, q, setQ }) {
   );
 }
 
+/* =========================================================
+   STORE
+========================================================= */
+
 function Store() {
   const nav = useNavigate();
 
-  const [products, setProducts] = useState([]);
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
+  const [
+    products,
+    setProducts
+  ] = useState([]);
 
-  const [cart, setCart] = useState(() => {
-    try {
-      return JSON.parse(
-        localStorage.getItem("bm_cart") || "[]"
-      );
-    } catch {
-      return [];
-    }
-  });
+  const [q, setQ] =
+    useState("");
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [cat, setCat] =
+    useState("All");
+
+  const [cart, setCart] =
+    useState(() => {
+      try {
+        return JSON.parse(
+          localStorage.getItem(
+            "bm_cart"
+          ) || "[]"
+        );
+      } catch {
+        return [];
+      }
+    });
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
     async function load() {
       try {
         setLoading(true);
-        setError("");
 
-        const data = await getProducts();
+        const data =
+          await getProducts();
 
         setProducts(data);
       } catch (err) {
         console.error(err);
         setError(
-          "Books load nahi ho paayi. Please try again."
+          "Books load nahi ho paayi."
         );
       } finally {
         setLoading(false);
@@ -165,32 +276,53 @@ function Store() {
     );
   }, [cart]);
 
-  const filtered = useMemo(() => {
-    return products.filter((p) => {
-      const categoryMatch =
-        cat === "All" || p.genre === cat;
+  const filtered =
+    useMemo(() => {
+      return products.filter((p) => {
 
-      const searchText =
-        `${p.title} ${p.author} ${p.genre}`.toLowerCase();
+        const categoryMatch =
+          cat === "All" ||
+          p.genre === cat;
 
-      const searchMatch =
-        !q ||
-        searchText.includes(q.toLowerCase());
+        const searchText =
+          `${p.title} ${p.author} ${p.genre}`
+            .toLowerCase();
 
-      return categoryMatch && searchMatch;
-    });
-  }, [products, q, cat]);
+        const searchMatch =
+          !q ||
+          searchText.includes(
+            q.toLowerCase()
+          );
+
+        return (
+          categoryMatch &&
+          searchMatch
+        );
+      });
+    }, [
+      products,
+      q,
+      cat
+    ]);
 
   const add = (p) => {
     setCart((current) => {
-      const exists = current.some(
-        (x) => x.id === p.id
-      );
+
+      const exists =
+        current.some(
+          (x) => x.id === p.id
+        );
 
       if (exists) {
         return current.map((x) =>
           x.id === p.id
-            ? { ...x, qty: x.qty + 1 }
+            ? {
+                ...x,
+                qty: Math.min(
+                  x.qty + 1,
+                  p.stock
+                )
+              }
             : x
         );
       }
@@ -205,10 +337,12 @@ function Store() {
     });
   };
 
-  const count = cart.reduce(
-    (a, x) => a + x.qty,
-    0
-  );
+  const count =
+    cart.reduce(
+      (a, x) =>
+        a + x.qty,
+      0
+    );
 
   return (
     <>
@@ -231,13 +365,16 @@ function Store() {
             <h1>
               Books you want.
               <br />
-              <em>Prices you won't expect.</em>
+              <em>
+                Prices you won't expect.
+              </em>
             </h1>
 
             <p>
-              Good books, low prices, zero delivery
-              drama. Online payment gets the lower
-              price. COD is available too.
+              Good books, low prices,
+              zero delivery drama.
+              Online payment gets the
+              lower price. COD is available too.
             </p>
 
             <button
@@ -261,7 +398,9 @@ function Store() {
               .slice(0, 3)
               .map((p, i) => (
                 <div
-                  className={"heroBook h" + i}
+                  className={
+                    "heroBook h" + i
+                  }
                   key={p.id}
                 >
                   <Cover p={p} />
@@ -296,7 +435,9 @@ function Store() {
           className="shop"
         >
 
-          <label>TODAY'S SHELVES</label>
+          <label>
+            TODAY'S SHELVES
+          </label>
 
           <div className="sectionTitle">
 
@@ -316,9 +457,13 @@ function Store() {
               <button
                 key={c}
                 className={
-                  cat === c ? "on" : ""
+                  cat === c
+                    ? "on"
+                    : ""
                 }
-                onClick={() => setCat(c)}
+                onClick={() =>
+                  setCat(c)
+                }
               >
                 {c}
               </button>
@@ -327,19 +472,17 @@ function Store() {
           </div>
 
           {loading ? (
-
             <div className="loading">
               Loading books...
             </div>
-
           ) : error ? (
-
             <div className="empty">
               <b>⚠️</b>
-              <h3>Books load nahi hui.</h3>
+              <h3>
+                Books load nahi hui.
+              </h3>
               <p>{error}</p>
             </div>
-
           ) : filtered.length ? (
 
             <div className="grid">
@@ -351,7 +494,10 @@ function Store() {
                     ? Math.max(
                         0,
                         Math.round(
-                          (1 - p.price / p.mrp) * 100
+                          (1 -
+                            p.price /
+                              p.mrp) *
+                            100
                         )
                       )
                     : 0;
@@ -365,7 +511,10 @@ function Store() {
                     <button
                       className="coverBtn"
                       onClick={() =>
-                        nav("/product/" + p.id)
+                        nav(
+                          "/product/" +
+                            p.id
+                        )
                       }
                     >
                       <Cover p={p} />
@@ -386,11 +535,15 @@ function Store() {
                     <div className="price">
 
                       <b>
-                        {money(p.price)}
+                        {money(
+                          p.price
+                        )}
                       </b>
 
                       <del>
-                        {money(p.mrp)}
+                        {money(
+                          p.mrp
+                        )}
                       </del>
 
                       <i>
@@ -400,15 +553,25 @@ function Store() {
                     </div>
 
                     <p>
-                      Online {money(p.price)}
+                      Online{" "}
+                      {money(
+                        p.price
+                      )}
                       {" · "}
-                      COD {money(p.codPrice)}
+                      COD{" "}
+                      {money(
+                        p.codPrice
+                      )}
                     </p>
 
                     <button
                       className="add"
-                      onClick={() => add(p)}
-                      disabled={!p.stock}
+                      disabled={
+                        !p.stock
+                      }
+                      onClick={() =>
+                        add(p)
+                      }
                     >
                       {p.stock
                         ? "Add to bag"
@@ -432,7 +595,8 @@ function Store() {
               </h3>
 
               <p>
-                Try another search or category.
+                Try another search
+                or category.
               </p>
 
             </div>
@@ -444,42 +608,46 @@ function Store() {
         <section className="why">
 
           <div>
-
             <label>
               WAIT, WHY SO CHEAP?
             </label>
 
             <h2>
-              A good book shouldn't need
-              a rich-person budget.
+              A good book shouldn't
+              need a rich-person budget.
             </h2>
-
           </div>
 
           <div>
             <b>01</b>
-            <h3>Clear prices</h3>
+            <h3>
+              Clear prices
+            </h3>
             <p>
-              Online and COD prices are
-              shown before you buy.
+              Online and COD prices
+              are shown before you buy.
             </p>
           </div>
 
           <div>
             <b>02</b>
-            <h3>Free delivery</h3>
+            <h3>
+              Free delivery
+            </h3>
             <p>
-              No surprise shipping line
-              at checkout.
+              No surprise shipping
+              line at checkout.
             </p>
           </div>
 
           <div>
             <b>03</b>
-            <h3>Pay your way</h3>
+            <h3>
+              Pay your way
+            </h3>
             <p>
-              Online for the lower price,
-              COD when you prefer.
+              Online for the lower
+              price, COD when you prefer.
             </p>
           </div>
 
@@ -491,7 +659,9 @@ function Store() {
         BookMandi · Books. Kam Daam. No Drama.
 
         <button
-          onClick={() => nav("/admin")}
+          onClick={() =>
+            nav("/admin")
+          }
         >
           Admin
         </button>
@@ -500,28 +670,38 @@ function Store() {
   );
 }
 
+/* =========================================================
+   PRODUCT PAGE
+========================================================= */
+
 function ProductPage() {
-  const { pathname } = useLocation();
+  const { pathname } =
+    useLocation();
 
-  const id = pathname
-    .split("/")
-    .pop();
+  const id =
+    pathname.split("/").pop();
 
-  const nav = useNavigate();
+  const nav =
+    useNavigate();
 
-  const [p, setP] = useState(null);
+  const [p, setP] =
+    useState(null);
+
   const [loading, setLoading] =
     useState(true);
 
-  const [cart, setCart] = useState(() => {
-    try {
-      return JSON.parse(
-        localStorage.getItem("bm_cart") || "[]"
-      );
-    } catch {
-      return [];
-    }
-  });
+  const [cart, setCart] =
+    useState(() => {
+      try {
+        return JSON.parse(
+          localStorage.getItem(
+            "bm_cart"
+          ) || "[]"
+        );
+      } catch {
+        return [];
+      }
+    });
 
   useEffect(() => {
     async function load() {
@@ -532,7 +712,6 @@ function ProductPage() {
           await getProduct(id);
 
         setP(product);
-
       } catch (error) {
         console.error(error);
         setP(null);
@@ -541,9 +720,7 @@ function ProductPage() {
       }
     }
 
-    if (id) {
-      load();
-    }
+    if (id) load();
   }, [id]);
 
   useEffect(() => {
@@ -564,30 +741,42 @@ function ProductPage() {
   if (!p) {
     return (
       <div className="loading">
-        <h3>Book not found.</h3>
+
+        <h3>
+          Book not found.
+        </h3>
 
         <button
           className="primary"
-          onClick={() => nav("/")}
+          onClick={() =>
+            nav("/")
+          }
         >
           Back to BookMandi
         </button>
+
       </div>
     );
   }
 
   const add = () => {
+
     setCart((current) => {
-      const exists = current.some(
-        (x) => x.id === p.id
-      );
+
+      const exists =
+        current.some(
+          (x) => x.id === p.id
+        );
 
       if (exists) {
         return current.map((x) =>
           x.id === p.id
             ? {
                 ...x,
-                qty: x.qty + 1
+                qty: Math.min(
+                  x.qty + 1,
+                  p.stock
+                )
               }
             : x
         );
@@ -605,23 +794,29 @@ function ProductPage() {
     nav("/cart");
   };
 
-  const cartCount = cart.reduce(
-    (a, x) => a + x.qty,
-    0
-  );
+  const cartCount =
+    cart.reduce(
+      (a, x) =>
+        a + x.qty,
+      0
+    );
 
   return (
     <>
       <div className="simpleTop">
 
         <button
-          onClick={() => nav("/")}
+          onClick={() =>
+            nav("/")
+          }
         >
           ← BookMandi
         </button>
 
         <button
-          onClick={() => nav("/cart")}
+          onClick={() =>
+            nav("/cart")
+          }
         >
           Bag ({cartCount})
         </button>
@@ -630,10 +825,32 @@ function ProductPage() {
 
       <main className="productPage">
 
-        <Cover
-          p={p}
-          large
-        />
+        <div>
+
+          <Cover
+            p={p}
+            large
+          />
+
+          {p.gallery.length > 0 && (
+
+            <div className="gallery">
+
+              {p.gallery.map(
+                (url) => (
+                  <img
+                    key={url}
+                    src={url}
+                    alt={p.title}
+                  />
+                )
+              )}
+
+            </div>
+
+          )}
+
+        </div>
 
         <div className="productCopy">
 
@@ -666,31 +883,23 @@ function ProductPage() {
           <div className="payOptions">
 
             <div>
-
               <b>ONLINE</b>
-
               <strong>
                 {money(p.price)}
               </strong>
-
               <small>
                 Lower price
               </small>
-
             </div>
 
             <div>
-
               <b>COD</b>
-
               <strong>
                 {money(p.codPrice)}
               </strong>
-
               <small>
                 Cash on delivery
               </small>
-
             </div>
 
           </div>
@@ -722,18 +931,26 @@ function ProductPage() {
   );
 }
 
-function Cart() {
-  const nav = useNavigate();
+/* =========================================================
+   CART
+========================================================= */
 
-  const [cart, setCart] = useState(() => {
-    try {
-      return JSON.parse(
-        localStorage.getItem("bm_cart") || "[]"
-      );
-    } catch {
-      return [];
-    }
-  });
+function Cart() {
+  const nav =
+    useNavigate();
+
+  const [cart, setCart] =
+    useState(() => {
+      try {
+        return JSON.parse(
+          localStorage.getItem(
+            "bm_cart"
+          ) || "[]"
+        );
+      } catch {
+        return [];
+      }
+    });
 
   useEffect(() => {
     localStorage.setItem(
@@ -742,28 +959,44 @@ function Cart() {
     );
   }, [cart]);
 
-  const count = cart.reduce(
-    (a, x) => a + x.qty,
-    0
-  );
+  const count =
+    cart.reduce(
+      (a, x) =>
+        a + x.qty,
+      0
+    );
 
-  const total = cart.reduce(
-    (a, x) =>
-      a +
-      x.qty *
-        Number(x.price || 0),
-    0
-  );
+  const total =
+    cart.reduce(
+      (a, x) =>
+        a +
+        x.qty *
+          Number(
+            x.price || 0
+          ),
+      0
+    );
 
-  const change = (id, d) => {
+  const change = (
+    id,
+    delta
+  ) => {
+
     setCart((current) =>
       current.flatMap((x) => {
+
         if (x.id !== id) {
           return [x];
         }
 
+        const max =
+          Number(x.stock || 999);
+
         const newQty =
-          x.qty + d;
+          Math.min(
+            x.qty + delta,
+            max
+          );
 
         if (newQty <= 0) {
           return [];
@@ -785,7 +1018,9 @@ function Cart() {
       <div className="simpleTop">
 
         <button
-          onClick={() => nav("/")}
+          onClick={() =>
+            nav("/")
+          }
         >
           ← Continue shopping
         </button>
@@ -802,12 +1037,15 @@ function Cart() {
 
           <h1>
             {count} item
-            {count !== 1 ? "s" : ""}
+            {count !== 1
+              ? "s"
+              : ""}
           </h1>
 
           {cart.length ? (
 
             cart.map((x) => (
+
               <div
                 className="cartRow"
                 key={x.id}
@@ -826,17 +1064,24 @@ function Cart() {
                   </small>
 
                   <p>
-                    {money(x.price)}
-                    {" online · "}
-                    {money(x.codPrice)}
-                    {" COD"}
+                    {money(
+                      x.price
+                    )}
+                    {" "}online ·{" "}
+                    {money(
+                      x.codPrice
+                    )}
+                    {" "}COD
                   </p>
 
                   <div className="qty">
 
                     <button
                       onClick={() =>
-                        change(x.id, -1)
+                        change(
+                          x.id,
+                          -1
+                        )
                       }
                     >
                       −
@@ -848,7 +1093,10 @@ function Cart() {
 
                     <button
                       onClick={() =>
-                        change(x.id, 1)
+                        change(
+                          x.id,
+                          1
+                        )
                       }
                     >
                       +
@@ -859,6 +1107,7 @@ function Cart() {
                 </div>
 
               </div>
+
             ))
 
           ) : (
@@ -886,17 +1135,20 @@ function Cart() {
             </label>
 
             {cart.map((x) => (
+
               <p key={x.id}>
 
                 {x.title} × {x.qty}
 
                 <b>
                   {money(
-                    x.price * x.qty
+                    x.price *
+                      x.qty
                   )}
                 </b>
 
               </p>
+
             ))}
 
             <hr />
@@ -936,44 +1188,59 @@ function Cart() {
   );
 }
 
+/* =========================================================
+   CHECKOUT
+========================================================= */
+
 function Checkout() {
-  const nav = useNavigate();
+  const nav =
+    useNavigate();
 
-  const [cart, setCart] = useState(() => {
-    try {
-      return JSON.parse(
-        localStorage.getItem("bm_cart") || "[]"
-      );
-    } catch {
-      return [];
-    }
-  });
+  const [cart] =
+    useState(() => {
+      try {
+        return JSON.parse(
+          localStorage.getItem(
+            "bm_cart"
+          ) || "[]"
+        );
+      } catch {
+        return [];
+      }
+    });
 
-  const [method, setMethod] =
-    useState("ONLINE");
+  const [
+    method,
+    setMethod
+  ] = useState("ONLINE");
 
-  const [form, setForm] = useState({
-    name: "",
-    phone: "",
-    address: "",
-    city: "",
-    pincode: ""
-  });
+  const [form, setForm] =
+    useState({
+      name: "",
+      phone: "",
+      address: "",
+      city: "",
+      pincode: ""
+    });
 
   const [msg, setMsg] =
     useState("");
 
-  const total = cart.reduce(
-    (a, x) =>
-      a +
-      x.qty *
-        (method === "COD"
-          ? x.codPrice
-          : x.price),
-    0
-  );
+  const total =
+    cart.reduce(
+      (a, x) =>
+        a +
+        x.qty *
+          (method === "COD"
+            ? x.codPrice
+            : x.price),
+      0
+    );
 
-  const field = (key, placeholder) => (
+  const field = (
+    key,
+    placeholder
+  ) => (
     <input
       required
       placeholder={placeholder}
@@ -981,7 +1248,8 @@ function Checkout() {
       onChange={(e) =>
         setForm({
           ...form,
-          [key]: e.target.value
+          [key]:
+            e.target.value
         })
       }
     />
@@ -990,24 +1258,8 @@ function Checkout() {
   async function submit(e) {
     e.preventDefault();
 
-    /*
-      Checkout backend is intentionally not connected yet.
-
-      We are migrating BookMandi to:
-
-      React
-        ↓
-      Supabase
-        ↓
-      Cashfree
-
-      COD order creation and Cashfree payment
-      will be connected after the database/product
-      layer is confirmed working.
-    */
-
     setMsg(
-      "Checkout backend is being connected to Supabase + Cashfree."
+      "Payment/order system ko Cashfree ke saath connect karna next step hai."
     );
   }
 
@@ -1017,7 +1269,9 @@ function Checkout() {
       <div className="simpleTop">
 
         <button
-          onClick={() => nav("/cart")}
+          onClick={() =>
+            nav("/cart")
+          }
         >
           ← Bag
         </button>
@@ -1042,7 +1296,9 @@ function Checkout() {
 
         <div className="checkoutGrid">
 
-          <form onSubmit={submit}>
+          <form
+            onSubmit={submit}
+          >
 
             {field(
               "name",
@@ -1083,7 +1339,9 @@ function Checkout() {
                     : ""
                 }
                 onClick={() =>
-                  setMethod("ONLINE")
+                  setMethod(
+                    "ONLINE"
+                  )
                 }
               >
 
@@ -1145,7 +1403,8 @@ function Checkout() {
               className="primary full"
               type="submit"
             >
-              Place order · {money(total)}
+              Place order ·{" "}
+              {money(total)}
             </button>
 
           </form>
@@ -1161,8 +1420,7 @@ function Checkout() {
             </h2>
 
             <p>
-              Payment:
-              {" "}
+              Payment:{" "}
               <b>
                 {method === "COD"
                   ? "Cash on Delivery"
@@ -1184,164 +1442,592 @@ function Checkout() {
   );
 }
 
+/* =========================================================
+   ADMIN
+========================================================= */
+
 function Admin() {
-  const nav = useNavigate();
 
-  const [session, setSession] =
-    useState(null);
+  const nav =
+    useNavigate();
 
-  const [products, setProducts] =
-    useState([]);
+  const [
+    session,
+    setSession
+  ] = useState(null);
 
-  const [orders, setOrders] =
-    useState([]);
+  const [
+    checking,
+    setChecking
+  ] = useState(true);
 
-  const [tab, setTab] =
-    useState("products");
+  const [
+    products,
+    setProducts
+  ] = useState([]);
 
-  const [msg, setMsg] =
-    useState("");
+  const [
+    orders,
+    setOrders
+  ] = useState([]);
+
+  const [
+    tab,
+    setTab
+  ] = useState("products");
+
+  const [
+    msg,
+    setMsg
+  ] = useState("");
+
+  const [
+    saving,
+    setSaving
+  ] = useState(false);
+
+  const [
+    form,
+    setForm
+  ] = useState({
+    title: "",
+    author: "",
+    genre: "Fiction",
+    description: "",
+    mrp: "",
+    price: "",
+    codPrice: "",
+    stock: "",
+    active: true
+  });
+
+  const [
+    frontFile,
+    setFrontFile
+  ] = useState(null);
+
+  const [
+    galleryFiles,
+    setGalleryFiles
+  ] = useState([]);
+
+  const [
+    frontPreview,
+    setFrontPreview
+  ] = useState("");
 
   useEffect(() => {
-    async function loadSession() {
-      const {
-        data: { session }
-      } = await supabase.auth.getSession();
 
-      setSession(session);
+    async function loadSession() {
+
+      const {
+        data
+      } =
+        await supabase.auth.getSession();
+
+      setSession(
+        data.session
+      );
+
+      setChecking(false);
     }
 
     loadSession();
 
     const {
       data: listener
-    } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession);
-      }
-    );
+    } =
+      supabase.auth.onAuthStateChange(
+        (_event, newSession) => {
+          setSession(
+            newSession
+          );
+        }
+      );
 
     return () => {
       listener.subscription.unsubscribe();
     };
+
   }, []);
 
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
+  async function loadAdminData() {
 
-    async function loadAdminData() {
-      const {
-        data: productData,
-        error: productError
-      } = await supabase
+    setMsg("");
+
+    const {
+      data: productData,
+      error: productError
+    } =
+      await supabase
         .from("products")
         .select("*")
         .order("created_at", {
           ascending: false
         });
 
-      if (productError) {
-        console.error(
-          "Admin products error:",
-          productError
-        );
-      } else {
-        setProducts(
-          (productData || []).map((p) => ({
-            ...p,
-            codPrice: Number(
-              p.cod_price
-            ),
-            price: Number(p.price),
-            mrp: Number(p.mrp),
-            stock: Number(p.stock),
-            image: p.image_url
-          }))
-        );
-      }
+    if (productError) {
+      setMsg(
+        productError.message
+      );
+    } else {
+      setProducts(
+        (productData || [])
+          .map(mapProduct)
+      );
+    }
 
-      const {
-        data: orderData,
-        error: orderError
-      } = await supabase
+    const {
+      data: orderData,
+      error: orderError
+    } =
+      await supabase
         .from("orders")
         .select("*")
         .order("created_at", {
           ascending: false
         });
 
-      if (orderError) {
-        console.error(
-          "Admin orders error:",
-          orderError
-        );
-      } else {
-        setOrders(orderData || []);
-      }
+    if (!orderError) {
+      setOrders(
+        orderData || []
+      );
     }
+  }
+
+  useEffect(() => {
+
+    if (!session) return;
 
     loadAdminData();
+
   }, [session]);
 
-  async function signIn(e) {
+  function resetForm() {
+
+    setForm({
+      title: "",
+      author: "",
+      genre: "Fiction",
+      description: "",
+      mrp: "",
+      price: "",
+      codPrice: "",
+      stock: "",
+      active: true
+    });
+
+    setFrontFile(null);
+    setGalleryFiles([]);
+    setFrontPreview("");
+  }
+
+  function updateForm(
+    key,
+    value
+  ) {
+
+    setForm((current) => ({
+      ...current,
+      [key]: value
+    }));
+  }
+
+  function selectFront(
+    file
+  ) {
+
+    if (!file) return;
+
+    if (
+      !file.type.startsWith(
+        "image/"
+      )
+    ) {
+      setMsg(
+        "Front cover image select karo."
+      );
+      return;
+    }
+
+    setFrontFile(file);
+
+    setFrontPreview(
+      URL.createObjectURL(file)
+    );
+  }
+
+  function selectGallery(
+    files
+  ) {
+
+    const images =
+      Array.from(files || [])
+        .filter((file) =>
+          file.type.startsWith(
+            "image/"
+          )
+        );
+
+    setGalleryFiles(images);
+  }
+
+  async function createProduct(
+    e
+  ) {
+
     e.preventDefault();
 
-    const form =
-      new FormData(e.currentTarget);
+    setMsg("");
+
+    if (!form.title.trim()) {
+      setMsg(
+        "Book name required hai."
+      );
+      return;
+    }
+
+    if (!form.author.trim()) {
+      setMsg(
+        "Author required hai."
+      );
+      return;
+    }
+
+    if (!form.description.trim()) {
+      setMsg(
+        "Description required hai."
+      );
+      return;
+    }
+
+    if (!frontFile) {
+      setMsg(
+        "Front cover image upload karo."
+      );
+      return;
+    }
+
+    const mrp =
+      Number(form.mrp);
+
+    const price =
+      Number(form.price);
+
+    const codPrice =
+      Number(form.codPrice);
+
+    const stock =
+      Number(form.stock);
+
+    if (
+      !mrp ||
+      !price ||
+      !codPrice ||
+      stock < 0
+    ) {
+      setMsg(
+        "Prices aur stock check karo."
+      );
+      return;
+    }
+
+    if (price > mrp) {
+      setMsg(
+        "Online price MRP se zyada nahi ho sakti."
+      );
+      return;
+    }
+
+    if (codPrice < price) {
+      setMsg(
+        "COD price online price se kam nahi honi chahiye."
+      );
+      return;
+    }
+
+    try {
+
+      setSaving(true);
+
+      setMsg(
+        "Uploading front cover..."
+      );
+
+      const frontUrl =
+        await uploadImage(
+          frontFile
+        );
+
+      setMsg(
+        "Uploading other images..."
+      );
+
+      const galleryUrls = [];
+
+      for (
+        const file of galleryFiles
+      ) {
+
+        const url =
+          await uploadImage(
+            file
+          );
+
+        if (url) {
+          galleryUrls.push(
+            url
+          );
+        }
+      }
+
+      setMsg(
+        "Saving book..."
+      );
+
+      const {
+        error
+      } =
+        await supabase
+          .from("products")
+          .insert({
+            title:
+              form.title.trim(),
+
+            author:
+              form.author.trim(),
+
+            genre:
+              form.genre,
+
+            description:
+              form.description.trim(),
+
+            mrp,
+
+            price,
+
+            cod_price:
+              codPrice,
+
+            stock,
+
+            image_url:
+              frontUrl,
+
+            gallery_urls:
+              galleryUrls,
+
+            active:
+              form.active
+          });
+
+      if (error) {
+        throw error;
+      }
+
+      resetForm();
+
+      await loadAdminData();
+
+      setTab(
+        "products"
+      );
+
+      setMsg(
+        "Book added successfully ✓"
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+      setMsg(
+        error.message ||
+          "Book save nahi hui."
+      );
+
+    } finally {
+
+      setSaving(false);
+
+    }
+  }
+
+  async function saveProduct(
+    p
+  ) {
+
+    try {
+
+      setSaving(true);
+      setMsg("");
+
+      const {
+        error
+      } =
+        await supabase
+          .from("products")
+          .update({
+            price:
+              Number(p.price),
+
+            cod_price:
+              Number(
+                p.codPrice
+              ),
+
+            mrp:
+              Number(p.mrp),
+
+            stock:
+              Number(p.stock),
+
+            active:
+              Boolean(p.active),
+
+            updated_at:
+              new Date().toISOString()
+          })
+          .eq(
+            "id",
+            p.id
+          );
+
+      if (error) {
+        throw error;
+      }
+
+      setMsg(
+        `"${p.title}" saved ✓`
+      );
+
+      await loadAdminData();
+
+    } catch (error) {
+
+      console.error(error);
+
+      setMsg(
+        error.message
+      );
+
+    } finally {
+
+      setSaving(false);
+
+    }
+  }
+
+  async function deleteProduct(
+    p
+  ) {
+
+    const yes =
+      window.confirm(
+        `Delete "${p.title}"?`
+      );
+
+    if (!yes) return;
+
+    try {
+
+      setSaving(true);
+
+      const {
+        error
+      } =
+        await supabase
+          .from("products")
+          .delete()
+          .eq(
+            "id",
+            p.id
+          );
+
+      if (error) {
+        throw error;
+      }
+
+      setMsg(
+        "Product deleted ✓"
+      );
+
+      await loadAdminData();
+
+    } catch (error) {
+
+      console.error(error);
+
+      setMsg(
+        error.message
+      );
+
+    } finally {
+
+      setSaving(false);
+
+    }
+  }
+
+  async function signIn(
+    e
+  ) {
+
+    e.preventDefault();
+
+    const data =
+      new FormData(
+        e.currentTarget
+      );
 
     const email =
-      form.get("email");
+      String(
+        data.get("email") || ""
+      );
 
     const password =
-      form.get("password");
+      String(
+        data.get("password") || ""
+      );
 
     setMsg("");
 
     const {
       error
-    } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
+    } =
+      await supabase.auth
+        .signInWithPassword({
+          email,
+          password
+        });
 
     if (error) {
-      setMsg(error.message);
+      setMsg(
+        error.message
+      );
     }
   }
 
   async function logout() {
-    await supabase.auth.signOut();
+
+    await supabase.auth
+      .signOut();
+
     setSession(null);
   }
 
-  async function save(p) {
-    setMsg("");
+  if (checking) {
 
-    const {
-      error
-    } = await supabase
-      .from("products")
-      .update({
-        price: Number(p.price),
-        cod_price: Number(
-          p.codPrice
-        ),
-        stock: Number(p.stock)
-      })
-      .eq("id", p.id);
-
-    if (error) {
-      console.error(error);
-      setMsg(error.message);
-      return;
-    }
-
-    setMsg("Saved ✓");
+    return (
+      <div className="loading">
+        Opening control room...
+      </div>
+    );
   }
 
   if (!session) {
+
     return (
       <div className="admin login">
 
@@ -1353,13 +2039,20 @@ function Admin() {
           Admin login
         </h1>
 
-        <form onSubmit={signIn}>
+        <p className="adminIntro">
+          Manage your entire bookstore
+          from here.
+        </p>
+
+        <form
+          onSubmit={signIn}
+        >
 
           <input
             name="email"
             type="email"
             required
-            placeholder="Email"
+            placeholder="Admin email"
           />
 
           <input
@@ -1379,7 +2072,9 @@ function Admin() {
         </form>
 
         {msg && (
-          <p>{msg}</p>
+          <p className="errorText">
+            {msg}
+          </p>
         )}
 
       </div>
@@ -1392,7 +2087,9 @@ function Admin() {
       <div className="adminTop">
 
         <button
-          onClick={() => nav("/")}
+          onClick={() =>
+            nav("/")
+          }
         >
           ← Store
         </button>
@@ -1405,13 +2102,35 @@ function Admin() {
 
       </div>
 
-      <label>
-        CONTROL ROOM
-      </label>
+      <div className="adminTitle">
 
-      <h1>
-        BookMandi Admin
-      </h1>
+        <div>
+
+          <label>
+            CONTROL ROOM
+          </label>
+
+          <h1>
+            BookMandi Admin
+          </h1>
+
+          <p>
+            Add books, manage prices,
+            stock and orders.
+          </p>
+
+        </div>
+
+        <button
+          className="primary"
+          onClick={() =>
+            setTab("add")
+          }
+        >
+          + Add new book
+        </button>
+
+      </div>
 
       <div className="stats">
 
@@ -1424,25 +2143,33 @@ function Admin() {
 
         <div>
           <b>
-            {orders.length}
+            {
+              products.filter(
+                (p) =>
+                  p.active
+              ).length
+            }
           </b>
-          Orders
+          Live
         </div>
 
         <div>
           <b>
-            {money(
-              orders.reduce(
-                (a, o) =>
-                  a +
-                  Number(
-                    o.total || 0
-                  ),
-                0
-              )
-            )}
+            {
+              products.filter(
+                (p) =>
+                  p.stock <= 0
+              ).length
+            }
           </b>
-          Order value
+          Out of stock
+        </div>
+
+        <div>
+          <b>
+            {orders.length}
+          </b>
+          Orders
         </div>
 
       </div>
@@ -1464,6 +2191,19 @@ function Admin() {
 
         <button
           className={
+            tab === "add"
+              ? "on"
+              : ""
+          }
+          onClick={() =>
+            setTab("add")
+          }
+        >
+          + Add book
+        </button>
+
+        <button
+          className={
             tab === "orders"
               ? "on"
               : ""
@@ -1477,15 +2217,500 @@ function Admin() {
 
       </div>
 
-      {tab === "products" ? (
+      {msg && (
+        <div className="adminMessage">
+          {msg}
+        </div>
+      )}
 
-        <>
+      {/* ===================================================
+          ADD BOOK
+      =================================================== */}
+
+      {tab === "add" && (
+
+        <section className="addBook">
+
+          <div className="addBookHeader">
+
+            <div>
+
+              <label>
+                NEW PRODUCT
+              </label>
+
+              <h2>
+                Put a book on the shelf.
+              </h2>
+
+              <p>
+                Fill the details,
+                upload the covers,
+                hit publish.
+              </p>
+
+            </div>
+
+          </div>
+
+          <form
+            className="bookForm"
+            onSubmit={
+              createProduct
+            }
+          >
+
+            <div className="formSection">
+
+              <div className="formSectionTitle">
+                <span>01</span>
+
+                <div>
+                  <h3>
+                    Book information
+                  </h3>
+
+                  <p>
+                    Basic details customers
+                    will see.
+                  </p>
+                </div>
+              </div>
+
+              <div className="formGrid">
+
+                <label>
+                  Book name
+
+                  <input
+                    value={
+                      form.title
+                    }
+                    onChange={(e) =>
+                      updateForm(
+                        "title",
+                        e.target.value
+                      )
+                    }
+                    placeholder="e.g. Atomic Habits"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Author
+
+                  <input
+                    value={
+                      form.author
+                    }
+                    onChange={(e) =>
+                      updateForm(
+                        "author",
+                        e.target.value
+                      )
+                    }
+                    placeholder="e.g. James Clear"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Category
+
+                  <select
+                    value={
+                      form.genre
+                    }
+                    onChange={(e) =>
+                      updateForm(
+                        "genre",
+                        e.target.value
+                      )
+                    }
+                  >
+                    {CATS
+                      .filter(
+                        (c) =>
+                          c !== "All"
+                      )
+                      .map((c) => (
+                        <option
+                          key={c}
+                          value={c}
+                        >
+                          {c}
+                        </option>
+                      ))}
+                  </select>
+
+                </label>
+
+                <label>
+                  Stock
+
+                  <input
+                    type="number"
+                    min="0"
+                    value={
+                      form.stock
+                    }
+                    onChange={(e) =>
+                      updateForm(
+                        "stock",
+                        e.target.value
+                      )
+                    }
+                    placeholder="10"
+                    required
+                  />
+                </label>
+
+                <label className="fullField">
+                  Description
+
+                  <textarea
+                    value={
+                      form.description
+                    }
+                    onChange={(e) =>
+                      updateForm(
+                        "description",
+                        e.target.value
+                      )
+                    }
+                    placeholder="Write a useful description of the book..."
+                    rows="6"
+                    required
+                  />
+
+                </label>
+
+              </div>
+
+            </div>
+
+            <div className="formSection">
+
+              <div className="formSectionTitle">
+
+                <span>02</span>
+
+                <div>
+                  <h3>
+                    Pricing
+                  </h3>
+
+                  <p>
+                    Online price can be
+                    lower than COD.
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="formGrid priceGrid">
+
+                <label>
+                  MRP
+
+                  <div className="moneyInput">
+                    <span>₹</span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      value={
+                        form.mrp
+                      }
+                      onChange={(e) =>
+                        updateForm(
+                          "mrp",
+                          e.target.value
+                        )
+                      }
+                      placeholder="799"
+                      required
+                    />
+                  </div>
+
+                </label>
+
+                <label>
+                  Online price
+
+                  <div className="moneyInput">
+                    <span>₹</span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      value={
+                        form.price
+                      }
+                      onChange={(e) =>
+                        updateForm(
+                          "price",
+                          e.target.value
+                        )
+                      }
+                      placeholder="179"
+                      required
+                    />
+                  </div>
+
+                  <small>
+                    Lower prepaid price
+                  </small>
+
+                </label>
+
+                <label>
+                  COD price
+
+                  <div className="moneyInput">
+                    <span>₹</span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      value={
+                        form.codPrice
+                      }
+                      onChange={(e) =>
+                        updateForm(
+                          "codPrice",
+                          e.target.value
+                        )
+                      }
+                      placeholder="199"
+                      required
+                    />
+                  </div>
+
+                  <small>
+                    Cash on delivery price
+                  </small>
+
+                </label>
+
+              </div>
+
+            </div>
+
+            <div className="formSection">
+
+              <div className="formSectionTitle">
+
+                <span>03</span>
+
+                <div>
+                  <h3>
+                    Book images
+                  </h3>
+
+                  <p>
+                    Front cover becomes
+                    the main product image.
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="uploadGrid">
+
+                <div className="uploadBox mainUpload">
+
+                  <label
+                    className="uploadLabel"
+                    htmlFor="front-image"
+                  >
+
+                    {frontPreview ? (
+
+                      <img
+                        src={
+                          frontPreview
+                        }
+                        alt="Front preview"
+                      />
+
+                    ) : (
+
+                      <div className="uploadPlaceholder">
+
+                        <strong>
+                          + Upload front cover
+                        </strong>
+
+                        <span>
+                          JPG, PNG or WEBP
+                        </span>
+
+                      </div>
+
+                    )}
+
+                  </label>
+
+                  <input
+                    id="front-image"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) =>
+                      selectFront(
+                        e.target.files?.[0]
+                      )
+                    }
+                    hidden
+                  />
+
+                  {frontFile && (
+                    <small>
+                      {frontFile.name}
+                    </small>
+                  )}
+
+                </div>
+
+                <div className="uploadBox">
+
+                  <label
+                    className="uploadLabel galleryUpload"
+                    htmlFor="gallery-images"
+                  >
+
+                    <div className="uploadPlaceholder">
+
+                      <strong>
+                        + Add other images
+                      </strong>
+
+                      <span>
+                        Back cover, pages,
+                        inside shots...
+                      </span>
+
+                    </div>
+
+                  </label>
+
+                  <input
+                    id="gallery-images"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) =>
+                      selectGallery(
+                        e.target.files
+                      )
+                    }
+                    hidden
+                  />
+
+                  {galleryFiles.length >
+                    0 && (
+
+                    <div className="selectedFiles">
+
+                      {galleryFiles.map(
+                        (file) => (
+                          <span
+                            key={
+                              file.name +
+                              file.size
+                            }
+                          >
+                            {file.name}
+                          </span>
+                        )
+                      )}
+
+                    </div>
+
+                  )}
+
+                </div>
+
+              </div>
+
+            </div>
+
+            <div className="formBottom">
+
+              <label className="publishToggle">
+
+                <input
+                  type="checkbox"
+                  checked={
+                    form.active
+                  }
+                  onChange={(e) =>
+                    updateForm(
+                      "active",
+                      e.target.checked
+                    )
+                  }
+                />
+
+                <span>
+                  Publish immediately
+                </span>
+
+              </label>
+
+              <div>
+
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={
+                    resetForm
+                  }
+                  disabled={saving}
+                >
+                  Clear
+                </button>
+
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "Publishing..."
+                    : "Publish book →"}
+                </button>
+
+              </div>
+
+            </div>
+
+          </form>
+
+        </section>
+
+      )}
+
+      {/* ===================================================
+          PRODUCTS
+      =================================================== */}
+
+      {tab === "products" && (
+
+        <section>
 
           <div className="adminHead">
 
-            <h2>
-              Products
-            </h2>
+            <div>
+              <label>
+                INVENTORY
+              </label>
+
+              <h2>
+                Your books
+              </h2>
+            </div>
 
             <span>
               {msg}
@@ -1495,175 +2720,350 @@ function Admin() {
 
           <div className="adminTable">
 
-            {products.map((p) => (
+            {products.length === 0 ? (
 
-              <div
-                className="adminRow"
-                key={p.id}
-              >
-
-                <div>
-
-                  <b>
-                    {p.title}
-                  </b>
-
-                  <small>
-                    {p.author}
-                  </small>
-
-                </div>
-
-                <label>
-
-                  Online
-
-                  <input
-                    type="number"
-                    value={p.price}
-                    onChange={(e) =>
-                      setProducts(
-                        products.map(
-                          (x) =>
-                            x.id === p.id
-                              ? {
-                                  ...x,
-                                  price:
-                                    Number(
-                                      e.target
-                                        .value
-                                    )
-                                }
-                              : x
-                        )
-                      )
-                    }
-                  />
-
-                </label>
-
-                <label>
-
-                  COD
-
-                  <input
-                    type="number"
-                    value={
-                      p.codPrice
-                    }
-                    onChange={(e) =>
-                      setProducts(
-                        products.map(
-                          (x) =>
-                            x.id === p.id
-                              ? {
-                                  ...x,
-                                  codPrice:
-                                    Number(
-                                      e.target
-                                        .value
-                                    )
-                                }
-                              : x
-                        )
-                      )
-                    }
-                  />
-
-                </label>
-
-                <label>
-
-                  Stock
-
-                  <input
-                    type="number"
-                    value={
-                      p.stock
-                    }
-                    onChange={(e) =>
-                      setProducts(
-                        products.map(
-                          (x) =>
-                            x.id === p.id
-                              ? {
-                                  ...x,
-                                  stock:
-                                    Number(
-                                      e.target
-                                        .value
-                                    )
-                                }
-                              : x
-                        )
-                      )
-                    }
-                  />
-
-                </label>
-
-                <button
-                  onClick={() =>
-                    save(p)
-                  }
-                >
-                  Save
-                </button>
-
+              <div className="empty">
+                <b>📚</b>
+                <h3>
+                  No books yet.
+                </h3>
+                <p>
+                  Add your first book.
+                </p>
               </div>
 
-            ))}
+            ) : (
+
+              products.map(
+                (p) => (
+
+                  <div
+                    className="adminRow"
+                    key={p.id}
+                  >
+
+                    <div className="adminProductInfo">
+
+                      <div className="miniCover">
+
+                        {p.image ? (
+
+                          <img
+                            src={
+                              p.image
+                            }
+                            alt=""
+                          />
+
+                        ) : (
+                          "📚"
+                        )}
+
+                      </div>
+
+                      <div>
+
+                        <b>
+                          {p.title}
+                        </b>
+
+                        <small>
+                          {p.author}
+                        </small>
+
+                        <em>
+                          {p.genre}
+                        </em>
+
+                      </div>
+
+                    </div>
+
+                    <label>
+                      MRP
+
+                      <input
+                        type="number"
+                        value={
+                          p.mrp
+                        }
+                        onChange={(e) =>
+                          setProducts(
+                            products.map(
+                              (x) =>
+                                x.id ===
+                                p.id
+                                  ? {
+                                      ...x,
+                                      mrp:
+                                        Number(
+                                          e.target
+                                            .value
+                                        )
+                                    }
+                                  : x
+                            )
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Online
+
+                      <input
+                        type="number"
+                        value={
+                          p.price
+                        }
+                        onChange={(e) =>
+                          setProducts(
+                            products.map(
+                              (x) =>
+                                x.id ===
+                                p.id
+                                  ? {
+                                      ...x,
+                                      price:
+                                        Number(
+                                          e.target
+                                            .value
+                                        )
+                                    }
+                                  : x
+                            )
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      COD
+
+                      <input
+                        type="number"
+                        value={
+                          p.codPrice
+                        }
+                        onChange={(e) =>
+                          setProducts(
+                            products.map(
+                              (x) =>
+                                x.id ===
+                                p.id
+                                  ? {
+                                      ...x,
+                                      codPrice:
+                                        Number(
+                                          e.target
+                                            .value
+                                        )
+                                    }
+                                  : x
+                            )
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Stock
+
+                      <input
+                        type="number"
+                        min="0"
+                        value={
+                          p.stock
+                        }
+                        onChange={(e) =>
+                          setProducts(
+                            products.map(
+                              (x) =>
+                                x.id ===
+                                p.id
+                                  ? {
+                                      ...x,
+                                      stock:
+                                        Number(
+                                          e.target
+                                            .value
+                                        )
+                                    }
+                                  : x
+                            )
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label className="activeField">
+
+                      Live
+
+                      <input
+                        type="checkbox"
+                        checked={
+                          p.active
+                        }
+                        onChange={(e) =>
+                          setProducts(
+                            products.map(
+                              (x) =>
+                                x.id ===
+                                p.id
+                                  ? {
+                                      ...x,
+                                      active:
+                                        e.target
+                                          .checked
+                                    }
+                                  : x
+                            )
+                          )
+                        }
+                      />
+
+                    </label>
+
+                    <button
+                      className="saveButton"
+                      disabled={
+                        saving
+                      }
+                      onClick={() =>
+                        saveProduct(
+                          p
+                        )
+                      }
+                    >
+                      Save
+                    </button>
+
+                    <button
+                      className="deleteButton"
+                      disabled={
+                        saving
+                      }
+                      onClick={() =>
+                        deleteProduct(
+                          p
+                        )
+                      }
+                    >
+                      Delete
+                    </button>
+
+                  </div>
+
+                )
+              )
+
+            )}
 
           </div>
 
-        </>
+        </section>
 
-      ) : (
+      )}
 
-        <div>
+      {/* ===================================================
+          ORDERS
+      =================================================== */}
+
+      {tab === "orders" && (
+
+        <section>
+
+          <div className="adminHead">
+
+            <div>
+              <label>
+                SALES
+              </label>
+
+              <h2>
+                Orders
+              </h2>
+            </div>
+
+            <span>
+              {orders.length} total
+            </span>
+
+          </div>
 
           {orders.length ? (
 
-            orders.map((o) => (
+            <div className="ordersList">
 
-              <div
-                className="order"
-                key={o.id}
-              >
+              {orders.map(
+                (o) => (
 
-                <b>
-                  {o.id}
-                </b>
+                  <div
+                    className="order"
+                    key={o.id}
+                  >
 
-                <span>
-                  {o.customer_name}
-                </span>
+                    <div>
 
-                <span>
-                  {o.payment_method}
-                </span>
+                      <b>
+                        Order
+                      </b>
 
-                <span>
-                  {money(o.total)}
-                </span>
+                      <small>
+                        {o.id}
+                      </small>
 
-                <strong>
-                  {o.status}
-                </strong>
+                    </div>
 
-              </div>
+                    <span>
+                      {o.customer_name}
+                    </span>
 
-            ))
+                    <span>
+                      {o.customer_phone}
+                    </span>
+
+                    <span>
+                      {o.payment_method}
+                    </span>
+
+                    <strong>
+                      {money(
+                        o.total
+                      )}
+                    </strong>
+
+                    <em>
+                      {o.status}
+                    </em>
+
+                  </div>
+
+                )
+              )}
+
+            </div>
 
           ) : (
 
             <div className="empty">
-              No orders yet.
+
+              <b>📦</b>
+
+              <h3>
+                No orders yet.
+              </h3>
+
+              <p>
+                Orders will appear here.
+              </p>
+
             </div>
 
           )}
 
-        </div>
+        </section>
 
       )}
 
@@ -1671,23 +3071,39 @@ function Admin() {
   );
 }
 
-function App() {
-  const path =
-    useLocation().pathname;
+/* =========================================================
+   APP ROUTER
+========================================================= */
 
-  if (path === "/cart") {
+function App() {
+
+  const path =
+    useLocation()
+      .pathname;
+
+  if (
+    path === "/cart"
+  ) {
     return <Cart />;
   }
 
-  if (path === "/checkout") {
+  if (
+    path === "/checkout"
+  ) {
     return <Checkout />;
   }
 
-  if (path.startsWith("/product/")) {
+  if (
+    path.startsWith(
+      "/product/"
+    )
+  ) {
     return <ProductPage />;
   }
 
-  if (path === "/admin") {
+  if (
+    path === "/admin"
+  ) {
     return <Admin />;
   }
 
@@ -1695,7 +3111,9 @@ function App() {
 }
 
 createRoot(
-  document.getElementById("root")
+  document.getElementById(
+    "root"
+  )
 ).render(
   <BrowserRouter>
     <App />
