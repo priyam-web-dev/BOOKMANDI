@@ -1785,6 +1785,32 @@ function Admin() {
         "Saving book..."
       );
 
+      // Verify the live browser session before touching the database.
+      // BookMandi admin is restricted to this Supabase user.
+      const {
+        data: userData,
+        error: userError
+      } = await supabase.auth.getUser();
+
+      console.log("BOOKMANDI AUTH USER:", userData?.user);
+      console.log("BOOKMANDI AUTH ID:", userData?.user?.id);
+      console.log("BOOKMANDI AUTH ERROR:", userError);
+
+      if (userError || !userData?.user) {
+        throw new Error(
+          "Admin session missing. Please logout and login again."
+        );
+      }
+
+      const ADMIN_USER_ID =
+        "34e33c78-777a-43cb-b5bf-f5646148cee9";
+
+      if (userData.user.id !== ADMIN_USER_ID) {
+        throw new Error(
+          `Wrong admin account. Current user ID: ${userData.user.id}`
+        );
+      }
+
       const {
         error
       } =
